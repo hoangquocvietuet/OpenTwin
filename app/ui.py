@@ -99,17 +99,35 @@ def create_ui(
         meta = result.retrieval_metadata
         chunks = result.retrieved_chunks or []
 
-        if mode == "rewrite":
-            lines = [
-                f"**Rewrite (copy)** — style from **{meta['chunks']}** chunks "
-                f"(avg match **{meta['avg_similarity']}**). Twin repeats your line in your voice."
-            ]
+        is_pipeline = meta.get("pipeline", False) if meta else False
+
+        if is_pipeline:
+            intent_str = meta.get("intent", "?")
+            tone_str = meta.get("tone", "?")
+            retries = meta.get("retries", 0)
+            retry_str = f" ({retries} retries)" if retries > 0 else ""
+            if mode == "rewrite":
+                lines = [
+                    f"**Rewrite (pipeline)** — intent: **{intent_str}**, tone: **{tone_str}**, "
+                    f"**{meta['chunks']}** chunks (avg match **{meta['avg_similarity']}**){retry_str}"
+                ]
+            else:
+                lines = [
+                    f"📊 **Pipeline** — intent: **{intent_str}**, tone: **{tone_str}**, "
+                    f"**{meta['chunks']}** chunks (avg similarity: **{meta['avg_similarity']}**){retry_str}"
+                ]
         else:
-            lines = [f"📊 Matched **{meta['chunks']}** chunks (avg similarity: **{meta['avg_similarity']}**)"]
+            if mode == "rewrite":
+                lines = [
+                    f"**Rewrite (copy)** — style from **{meta['chunks']}** chunks "
+                    f"(avg match **{meta['avg_similarity']}**). Twin repeats your line in your voice."
+                ]
+            else:
+                lines = [f"📊 Matched **{meta['chunks']}** chunks (avg similarity: **{meta['avg_similarity']}**)"]
 
         for i, chunk in enumerate(chunks, 1):
-            sim = round(1 - chunk["distance"], 3)
-            doc = chunk["document"].replace("\n", " → ")
+            sim = round(1 - chunk.get("distance", 1), 3)
+            doc = chunk.get("document", "").replace("\n", " → ")
             lines.append(f"{i}. `[{sim}]` {doc}")
 
         return history, "\n".join(lines)
