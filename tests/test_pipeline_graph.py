@@ -14,7 +14,7 @@ def _make_mock_llm_client(response_text: str):
 
 
 def test_build_pipeline_returns_compiled_graph():
-    """build_pipeline returns a compiled LangGraph."""
+    """build_pipeline returns a compiled LangGraph with bound dependencies."""
     pipeline = build_pipeline()
     assert pipeline is not None
 
