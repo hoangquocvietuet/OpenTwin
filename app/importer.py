@@ -320,6 +320,41 @@ def _chunk_and_save(
     return len(train), len(holdout), fp_path
 
 
+def _enrich_chunks_with_analyzers(chunks, twin_name, analyzer_base_url=None,
+                                   analyzer_model=None, analyzer_api_key=None):
+    """Optionally enrich chunks with analyzer metadata.
+
+    Returns enriched chunks if analyzer model is configured, else returns chunks as-is.
+    """
+    if not analyzer_base_url or not analyzer_model:
+        return chunks
+
+    try:
+        import openai as openai_module
+        from app.analyzers.default_registry import create_default_registry
+        from app.analyzers.registry import run_analyzers
+
+        client = openai_module.OpenAI(base_url=analyzer_base_url, api_key=analyzer_api_key or "ollama")
+        registry = create_default_registry()
+
+        for i, chunk in enumerate(chunks):
+            prev_chunk = chunks[i - 1] if i > 0 else None
+            next_chunk = chunks[i + 1] if i < len(chunks) - 1 else None
+
+            new_meta = run_analyzers(
+                registry, chunk, twin_name=twin_name,
+                prev_chunk=prev_chunk, next_chunk=next_chunk,
+                llm_client=client, llm_model=analyzer_model,
+            )
+            if "metadata" not in chunk:
+                chunk["metadata"] = {}
+            chunk["metadata"].update(new_meta)
+
+        return chunks
+    except ImportError:
+        return chunks
+
+
 def run_import_pipeline(
     zip_path: str,
     chromadb_client: chromadb.ClientAPI,
