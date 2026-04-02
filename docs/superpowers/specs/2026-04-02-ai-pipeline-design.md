@@ -239,6 +239,20 @@ Output: list of boundary indices splitting the conversation into segments.
 }
 ```
 
+## ChromaDB Collection Settings
+
+All collections MUST be created with cosine distance (not the ChromaDB default of L2/Euclidean). This is critical — L2 distances are unbounded, making `1 - distance` produce negative similarity scores.
+
+```python
+collection = client.get_or_create_collection(
+    name=collection_name,
+    metadata={"hnsw:space": "cosine"},  # REQUIRED — never omit
+    embedding_function=embedding_fn,
+)
+```
+
+The `importer.py`, `backfill.py`, `rechunk.py`, and `pipeline/agents/retriever.py` must all enforce this. Existing collections created without cosine require re-import (`rechunk` handles this).
+
 ## Metadata Enrichment System
 
 ### Analyzer Registry
