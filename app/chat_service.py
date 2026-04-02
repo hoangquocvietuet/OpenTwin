@@ -5,12 +5,17 @@ LLM call, error handling, and DB persistence.
 """
 
 import json
+import logging
 from dataclasses import dataclass
 
 import openai
 
 from app.database import ChatMessage
 from app.retrieval import retrieve_chunks, format_few_shot_examples
+from app.pipeline.detect import has_enriched_metadata as _has_enriched_metadata
+from app.config import settings
+
+logger = logging.getLogger(__name__)
 
 MAX_MESSAGE_LENGTH = 10_000
 
@@ -41,8 +46,9 @@ def _extract_utterances_by_speaker(document: str, speaker: str) -> list[str]:
     return out
 
 
-def chat(
+def _legacy_chat(
     content: str,
+    mode: str,
     collection,
     session_factory,
     twin_slug: str,
@@ -52,51 +58,12 @@ def chat(
     llm_base_url: str,
     llm_model: str,
     llm_api_key: str,
-    mode: str = "answer",
 ) -> ChatResult:
-    """Process a chat message through the full RAG pipeline.
-
-    1. Validate input
-    2. Retrieve similar chunks from ChromaDB
-    3. Build prompt with system prompt + few-shot + history
-    4. Call LLM
-    5. Save to DB
-    6. Return result
-    """
-    # 1. Validate
-    content = content.strip()
-    if not content:
-        return ChatResult(content="Please enter a message.", error=True)
-
-    # Normalize mode (API / UI)
-    mode = (mode or "answer").strip().lower()
-    if mode in ("chat", "answer"):
-        mode = "answer"
-
-    # Lightweight UX: allow "rewrite:" prefix without changing UI.
-    lowered = content.lower()
-    if lowered.startswith("rewrite:"):
-        mode = "rewrite"
-        content = content[len("rewrite:"):].strip()
-    elif lowered.startswith("rewrite "):
-        mode = "rewrite"
-        content = content[len("rewrite"):].strip()
-
-    # Truncate silently if too long
-    if len(content) > MAX_MESSAGE_LENGTH:
-        content = content[:MAX_MESSAGE_LENGTH]
-
-    # 2. Check if twin has data
-    if collection.count() == 0:
-        return ChatResult(
-            content="This twin doesn't have any imported data yet. Import chat data first, then ask again.",
-            error=True,
-        )
-
-    # 3. Retrieve
+    """Legacy chat path using direct retrieval and LLM call."""
+    # Retrieve
     retrieved = retrieve_chunks(collection, content, n_results=5)
 
-    # 4. Build messages
+    # Build messages
     few_shot = format_few_shot_examples(retrieved, max_examples=3)
     avg_distance = (
         (sum(r["distance"] for r in retrieved) / len(retrieved)) if retrieved else 1.0
@@ -156,7 +123,7 @@ def chat(
 
         messages.append({"role": "user", "content": content})
 
-    # 5. LLM call
+    # LLM call
     try:
         client = openai.OpenAI(base_url=llm_base_url, api_key=llm_api_key)
         response = client.chat.completions.create(
@@ -203,7 +170,7 @@ def chat(
         "avg_similarity": round(1 - avg_distance, 3),
     }
 
-    # 6. Save to DB
+    # Save to DB
     try:
         with session_factory() as session:
             session.add(ChatMessage(
@@ -227,3 +194,153 @@ def chat(
         retrieval_metadata=retrieval_meta,
         retrieved_chunks=retrieved,
     )
+
+
+def _pipeline_chat(
+    content: str,
+    mode: str,
+    collection,
+    session_factory,
+    twin_slug: str,
+    twin_name: str,
+    system_prompt: str,
+    rewrite_prompt: str,
+    llm_base_url: str,
+    llm_model: str,
+    llm_api_key: str,
+) -> ChatResult:
+    """Chat using the multi-agent pipeline."""
+    import openai as openai_module
+    from app.pipeline.graph import run_pipeline
+
+    llm_client = openai_module.OpenAI(base_url=llm_base_url, api_key=llm_api_key)
+    classifier_client = openai_module.OpenAI(
+        base_url=settings.classifier_base_url,
+        api_key=settings.classifier_api_key,
+    )
+
+    try:
+        result = run_pipeline(
+            raw_input=content,
+            mode=mode,
+            collection=collection,
+            llm_client=llm_client,
+            llm_model=llm_model,
+            classifier_client=classifier_client,
+            classifier_model=settings.classifier_model,
+            system_prompt=system_prompt,
+            rewrite_prompt=rewrite_prompt,
+            session_factory=session_factory,
+            twin_slug=twin_slug,
+        )
+    except Exception:
+        logger.exception("Pipeline execution failed")
+        return ChatResult(content="Something went wrong. Please try again.", error=True)
+
+    if not result.draft_response or not result.draft_response.strip():
+        return ChatResult(content="No response generated. Try rephrasing.", error=True)
+
+    # Build retrieval metadata
+    all_chunks = (result.tone_chunks or []) + (result.content_chunks or [])
+    avg_distance = (
+        (sum(c.get("distance", 1.0) for c in all_chunks) / len(all_chunks))
+        if all_chunks else 1.0
+    )
+    retrieval_meta = {
+        "chunks": len(all_chunks),
+        "avg_similarity": round(1 - avg_distance, 3),
+        "pipeline": True,
+        "intent": result.intent,
+        "tone": result.tone,
+        "retries": result.retry_count,
+    }
+
+    # Save to DB
+    try:
+        with session_factory() as session:
+            session.add(ChatMessage(
+                twin_slug=twin_slug,
+                role="user",
+                content=content if mode != "rewrite" else f"[copy] {content}",
+            ))
+            session.add(ChatMessage(
+                twin_slug=twin_slug,
+                role="assistant",
+                content=result.draft_response,
+                retrieval_metadata=retrieval_meta,
+            ))
+            session.commit()
+    except Exception:
+        logger.warning("Failed to save pipeline chat to DB", exc_info=True)
+
+    return ChatResult(
+        content=result.draft_response,
+        retrieval_metadata=retrieval_meta,
+        retrieved_chunks=all_chunks,
+    )
+
+
+def chat(
+    content: str,
+    collection,
+    session_factory,
+    twin_slug: str,
+    twin_name: str,
+    system_prompt: str,
+    rewrite_prompt: str,
+    llm_base_url: str,
+    llm_model: str,
+    llm_api_key: str,
+    mode: str = "answer",
+) -> ChatResult:
+    """Process a chat message through the full RAG pipeline.
+
+    1. Validate input
+    2. Route to pipeline (enriched) or legacy based on collection metadata
+    """
+    # 1. Validate
+    content = content.strip()
+    if not content:
+        return ChatResult(content="Please enter a message.", error=True)
+
+    # Normalize mode (API / UI)
+    mode = (mode or "answer").strip().lower()
+    if mode in ("chat", "answer"):
+        mode = "answer"
+
+    # Lightweight UX: allow "rewrite:" prefix without changing UI.
+    lowered = content.lower()
+    if lowered.startswith("rewrite:"):
+        mode = "rewrite"
+        content = content[len("rewrite:"):].strip()
+    elif lowered.startswith("rewrite "):
+        mode = "rewrite"
+        content = content[len("rewrite"):].strip()
+
+    # Truncate silently if too long
+    if len(content) > MAX_MESSAGE_LENGTH:
+        content = content[:MAX_MESSAGE_LENGTH]
+
+    # Check if twin has data (shared by both paths)
+    if collection.count() == 0:
+        return ChatResult(
+            content="This twin doesn't have any imported data yet. Import chat data first, then ask again.",
+            error=True,
+        )
+
+    if _has_enriched_metadata(collection):
+        return _pipeline_chat(
+            content=content, mode=mode, collection=collection,
+            session_factory=session_factory, twin_slug=twin_slug,
+            twin_name=twin_name, system_prompt=system_prompt,
+            rewrite_prompt=rewrite_prompt, llm_base_url=llm_base_url,
+            llm_model=llm_model, llm_api_key=llm_api_key,
+        )
+    else:
+        return _legacy_chat(
+            content=content, mode=mode, collection=collection,
+            session_factory=session_factory, twin_slug=twin_slug,
+            twin_name=twin_name, system_prompt=system_prompt,
+            rewrite_prompt=rewrite_prompt, llm_base_url=llm_base_url,
+            llm_model=llm_model, llm_api_key=llm_api_key,
+        )

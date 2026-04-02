@@ -52,6 +52,32 @@ db/chat_history.db          # SQLite chat history + settings
 
 **Twin detection:** Scans `data/` for subdirectories containing `sources.json` or `style_fingerprint.json`. Auto-generates twin name from slug when `TWIN_NAME=auto`.
 
+## AI Pipeline (when enriched metadata present)
+
+The system has two code paths in `chat_service.chat()`:
+- **Legacy path**: Direct RAG (cosine search → LLM). Used when chunks lack enriched metadata.
+- **Pipeline path**: 4-agent LangGraph pipeline. Activates automatically when chunks have analyzer metadata.
+
+**Pipeline flow:** Intent Agent → Context Agent (conditional) → Retriever Agent → Responder Agent → Critic Agent (with retry loop).
+
+**Key modules:**
+- `app/pipeline/graph.py` — LangGraph pipeline definition and `run_pipeline()` entry point.
+- `app/pipeline/agents/` — One file per agent: intent, context, retriever, responder, critic.
+- `app/pipeline/state.py` — `PipelineState` dataclass shared across agents.
+- `app/pipeline/tone_map.py` — Tone similarity mapping for retrieval expansion.
+- `app/pipeline/detect.py` — Checks if collection has enriched metadata.
+- `app/analyzers/` — Metadata enrichment system: registry, stats, context, tone, emotion, persona.
+- `app/chunking/` — Dynamic chunking: boundary detection + segment normalization.
+- `app/backfill.py` — CLI to run missing analyzers on existing chunks.
+- `app/rechunk.py` — CLI to re-chunk and re-analyze all data.
+
+**Commands:**
+```bash
+python -m app.backfill                  # run missing analyzers on existing chunks
+python -m app.backfill --analyzer tone_v1  # run specific analyzer
+python -m app.rechunk                   # re-chunk + re-analyze all data
+```
+
 ## Skill routing
 
 When the user's request matches an available skill, ALWAYS invoke it using the Skill
