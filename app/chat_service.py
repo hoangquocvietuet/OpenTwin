@@ -63,7 +63,7 @@ def _legacy_chat(
     # Retrieve
     retrieved = retrieve_chunks(collection, content, n_results=5)
 
-    # 4. Build messages
+    # Build messages
     few_shot = format_few_shot_examples(retrieved, max_examples=3)
     avg_distance = (
         (sum(r["distance"] for r in retrieved) / len(retrieved)) if retrieved else 1.0
@@ -123,7 +123,7 @@ def _legacy_chat(
 
         messages.append({"role": "user", "content": content})
 
-    # 5. LLM call
+    # LLM call
     try:
         client = openai.OpenAI(base_url=llm_base_url, api_key=llm_api_key)
         response = client.chat.completions.create(
@@ -170,7 +170,7 @@ def _legacy_chat(
         "avg_similarity": round(1 - avg_distance, 3),
     }
 
-    # 6. Save to DB
+    # Save to DB
     try:
         with session_factory() as session:
             session.add(ChatMessage(
@@ -233,8 +233,9 @@ def _pipeline_chat(
             session_factory=session_factory,
             twin_slug=twin_slug,
         )
-    except Exception as e:
-        return ChatResult(content=f"Pipeline error: {e}", error=True)
+    except Exception:
+        logger.exception("Pipeline execution failed")
+        return ChatResult(content="Something went wrong. Please try again.", error=True)
 
     if not result.draft_response or not result.draft_response.strip():
         return ChatResult(content="No response generated. Try rephrasing.", error=True)

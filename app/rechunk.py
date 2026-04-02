@@ -15,13 +15,11 @@ from collections import defaultdict
 import chromadb
 import openai
 
-from app.analyzers.default_registry import create_default_registry
-from app.analyzers.registry import run_analyzers
 from app.chunking.boundary import detect_boundaries
 from app.chunking.normalizer import normalize_segments, build_chunks
 from app.config import settings
 from app.embedder import get_embedding_function
-from app.importer import _safe_collection_name
+from app.importer import _safe_collection_name, _enrich_chunks_with_analyzers
 
 logger = logging.getLogger(__name__)
 
@@ -145,7 +143,7 @@ def rechunk_twin(
 
 def main():
     parser = argparse.ArgumentParser(description="Re-chunk and re-analyze all data for a twin")
-    args = parser.parse_args()
+    parser.parse_args()
 
     logging.basicConfig(level=logging.INFO, format="%(levelname)s:%(name)s:%(message)s")
 
@@ -194,28 +192,43 @@ def main():
 
     # 2. Enrich with analyzers
     print(f"Enriching {len(chunks)} chunks with analyzers...")
-    registry = create_default_registry()
+    _enrich_chunks_with_analyzers(
+        chunks, twin_name=twin_name,
+        analyzer_base_url=settings.analyzer_base_url,
+        analyzer_model=settings.analyzer_model,
+        analyzer_api_key=settings.analyzer_api_key,
+    )
 
-    for i, chunk in enumerate(chunks):
-        prev_chunk = chunks[i - 1] if i > 0 else None
-        next_chunk = chunks[i + 1] if i < len(chunks) - 1 else None
-
-        new_meta = run_analyzers(
-            registry, chunk, twin_name=twin_name,
-            prev_chunk=prev_chunk, next_chunk=next_chunk,
-            llm_client=analyzer_client, llm_model=settings.analyzer_model,
-        )
-        chunk["metadata"].update(new_meta)
-
-        # Serialize _analyzers_applied for ChromaDB
-        if "_analyzers_applied" in chunk["metadata"]:
+    # Serialize _analyzers_applied dicts for ChromaDB storage
+    for chunk in chunks:
+        if "_analyzers_applied" in chunk.get("metadata", {}):
             chunk["metadata"]["_analyzers_applied"] = json.dumps(chunk["metadata"]["_analyzers_applied"])
 
-        if (i + 1) % 50 == 0:
-            print(f"  ...{i + 1}/{len(chunks)} enriched")
+    # 3. Ingest into temp collection, then swap (safe against interrupted runs)
+    temp_name = f"{collection_name}_rechunk"
+    print(f"Ingesting into temp collection '{temp_name}'...")
+    try:
+        chromadb_client.delete_collection(temp_name)
+    except Exception:
+        pass
 
-    # 3. Delete old collection and create new with cosine
-    print(f"Recreating collection '{collection_name}'...")
+    temp_collection = chromadb_client.get_or_create_collection(
+        name=temp_name,
+        metadata={"hnsw:space": "cosine"},
+        embedding_function=ef,
+    )
+
+    batch_size = 50
+    for i in range(0, len(chunks), batch_size):
+        batch = chunks[i:i + batch_size]
+        temp_collection.add(
+            ids=[c["chunk_id"] for c in batch],
+            documents=[c["document"] for c in batch],
+            metadatas=[c["metadata"] for c in batch],
+        )
+
+    # 4. Swap: delete old, create new from temp
+    print(f"Swapping '{temp_name}' → '{collection_name}'...")
     try:
         chromadb_client.delete_collection(collection_name)
     except Exception:
@@ -227,16 +240,22 @@ def main():
         embedding_function=ef,
     )
 
-    # 4. Ingest
-    print(f"Ingesting {len(chunks)} chunks...")
-    batch_size = 50
-    for i in range(0, len(chunks), batch_size):
-        batch = chunks[i:i + batch_size]
-        collection.add(
-            ids=[c["chunk_id"] for c in batch],
-            documents=[c["document"] for c in batch],
-            metadatas=[c["metadata"] for c in batch],
-        )
+    # Copy from temp to final
+    temp_data = temp_collection.get(include=["documents", "metadatas"])
+    if temp_data["ids"]:
+        for i in range(0, len(temp_data["ids"]), batch_size):
+            end = min(i + batch_size, len(temp_data["ids"]))
+            collection.add(
+                ids=temp_data["ids"][i:end],
+                documents=temp_data["documents"][i:end],
+                metadatas=temp_data["metadatas"][i:end],
+            )
+
+    # Clean up temp
+    try:
+        chromadb_client.delete_collection(temp_name)
+    except Exception:
+        pass
 
     print(f"Done. {collection.count()} chunks in collection.")
 
