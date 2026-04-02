@@ -5,7 +5,6 @@ emoji usage, question detection, language detection.
 """
 
 import re
-import unicodedata
 
 # Vietnamese-specific characters beyond ASCII
 _VIETNAMESE_PATTERN = re.compile(r'[àáảãạăắằẳẵặâấầẩẫậèéẻẽẹêếềểễệìíỉĩịòóỏõọôốồổỗộơớờởỡợùúủũụưứừửữựỳýỷỹỵđ]', re.IGNORECASE)
@@ -69,8 +68,8 @@ def analyze_stats(chunk: dict, twin_name: str) -> dict:
             "language": "vi",
         }
 
-    texts = [m.get("text", "") for m in messages]
-    twin_texts = [m.get("text", "") for m in messages if m.get("author") == twin_name]
+    texts = [m.get("text") or "" for m in messages]
+    twin_texts = [m.get("text") or "" for m in messages if m.get("author") == twin_name]
 
     all_lengths = [len(t) for t in texts]
     twin_lengths = [len(t) for t in twin_texts]

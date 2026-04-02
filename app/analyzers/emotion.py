@@ -54,7 +54,7 @@ def analyze_emotion(
         parsed = json.loads(raw)
         return {
             "emotion": parsed.get("emotion", defaults["emotion"]),
-            "sentiment": float(parsed.get("sentiment", defaults["sentiment"])),
+            "sentiment": max(-1.0, min(1.0, float(parsed.get("sentiment", defaults["sentiment"])))),
             "conflict": bool(parsed.get("conflict", defaults["conflict"])),
             "sarcasm": bool(parsed.get("sarcasm", defaults["sarcasm"])),
         }

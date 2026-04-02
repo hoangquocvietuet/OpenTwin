@@ -53,7 +53,7 @@ def analyze_tone(
         parsed = json.loads(raw)
         return {
             "tone": parsed.get("tone", defaults["tone"]),
-            "formality": float(parsed.get("formality", defaults["formality"])),
+            "formality": max(0.0, min(1.0, float(parsed.get("formality", defaults["formality"])))),
             "energy": parsed.get("energy", defaults["energy"]),
         }
     except (json.JSONDecodeError, ValueError, Exception):

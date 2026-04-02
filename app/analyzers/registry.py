@@ -77,7 +77,15 @@ def run_analyzers(
     Returns:
         Dict of new/updated metadata fields, including _analyzers_applied.
     """
-    applied = dict(chunk.get("metadata", {}).get("_analyzers_applied", {}))
+    applied_raw = chunk.get("metadata", {}).get("_analyzers_applied", {})
+    if isinstance(applied_raw, str):
+        import json
+        try:
+            applied = json.loads(applied_raw)
+        except (json.JSONDecodeError, ValueError):
+            applied = {}
+    else:
+        applied = dict(applied_raw)
     all_new_metadata: dict = {}
 
     analyzers = registry.get_all()

@@ -42,6 +42,7 @@ def analyze_context(
     if not llm_client or not input.chunk.get("messages"):
         return defaults
 
+    raw = ""
     parts = []
     if input.prev_chunk and input.prev_chunk.get("messages"):
         parts.append(f"[PREVIOUS CONTEXT]\n{_format_messages(input.prev_chunk['messages'], max_messages=5)}")

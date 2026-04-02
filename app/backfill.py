@@ -35,31 +35,33 @@ def find_chunks_needing_backfill(
     if count == 0:
         return set()
 
-    result = collection.get(include=["metadatas"])
-    ids = result["ids"]
-    metadatas = result["metadatas"]
-
     analyzers_to_check = (
         [registry.get(analyzer_name)] if analyzer_name and registry.get(analyzer_name)
         else registry.get_all()
     )
 
     needs_backfill = set()
-    for i, chunk_id in enumerate(ids):
-        meta = metadatas[i] or {}
-        applied_raw = meta.get("_analyzers_applied", "{}")
-        if isinstance(applied_raw, str):
-            try:
-                applied = json.loads(applied_raw)
-            except json.JSONDecodeError:
-                applied = {}
-        else:
-            applied = applied_raw
+    batch_size = 1000
+    for offset in range(0, count, batch_size):
+        result = collection.get(include=["metadatas"], limit=batch_size, offset=offset)
+        ids = result["ids"]
+        metadatas = result["metadatas"]
 
-        for analyzer in analyzers_to_check:
-            if analyzer and applied.get(analyzer.name) != analyzer.version:
-                needs_backfill.add(chunk_id)
-                break
+        for i, chunk_id in enumerate(ids):
+            meta = metadatas[i] or {}
+            applied_raw = meta.get("_analyzers_applied", "{}")
+            if isinstance(applied_raw, str):
+                try:
+                    applied = json.loads(applied_raw)
+                except json.JSONDecodeError:
+                    applied = {}
+            else:
+                applied = applied_raw
+
+            for analyzer in analyzers_to_check:
+                if analyzer and applied.get(analyzer.name) != analyzer.version:
+                    needs_backfill.add(chunk_id)
+                    break
 
     return needs_backfill
 
@@ -82,39 +84,68 @@ def backfill_collection(
         logger.info("No chunks need backfill.")
         return 0
 
-    logger.info(f"Backfilling {len(chunk_ids)} chunks...")
+    total = len(chunk_ids)
+    logger.info(f"Backfilling {total} chunks...")
 
-    result = collection.get(ids=list(chunk_ids), include=["metadatas", "documents"])
     updated = 0
+    failed = 0
+    batch_size = 100
+    chunk_id_list = list(chunk_ids)
 
-    for i, chunk_id in enumerate(result["ids"]):
-        meta = result["metadatas"][i] or {}
-        doc = result["documents"][i] or ""
+    # Only run non-LLM analyzers during backfill (messages aren't stored in ChromaDB,
+    # so LLM analyzers would just produce defaults and permanently mark as "applied")
+    from app.analyzers.registry import AnalyzerRegistry as _AR
+    backfill_registry = _AR()
+    for analyzer in registry.get_all():
+        if not analyzer.requires_llm:
+            backfill_registry.register(
+                analyzer.name, fn=analyzer.fn, version=analyzer.version,
+                requires_llm=analyzer.requires_llm, run_order=analyzer.run_order,
+            )
 
-        chunk = {
-            "chunk_id": chunk_id,
-            "document": doc,
-            "messages": [],
-            "metadata": meta,
-        }
+    for batch_start in range(0, total, batch_size):
+        batch_ids = chunk_id_list[batch_start:batch_start + batch_size]
+        result = collection.get(ids=batch_ids, include=["metadatas", "documents"])
 
-        new_metadata = run_analyzers(
-            registry, chunk, twin_name=twin_name,
-            llm_client=llm_client, llm_model=llm_model,
-        )
+        update_ids = []
+        update_metas = []
 
-        if new_metadata and new_metadata != {"_analyzers_applied": meta.get("_analyzers_applied", {})}:
-            updated_meta = dict(meta)
-            updated_meta.update(new_metadata)
-            if "_analyzers_applied" in updated_meta and isinstance(updated_meta["_analyzers_applied"], dict):
-                updated_meta["_analyzers_applied"] = json.dumps(updated_meta["_analyzers_applied"])
-            collection.update(ids=[chunk_id], metadatas=[updated_meta])
-            updated += 1
+        for i, chunk_id in enumerate(result["ids"]):
+            try:
+                meta = result["metadatas"][i] or {}
+                doc = result["documents"][i] or ""
 
-        if updated % 50 == 0 and updated > 0:
-            logger.info(f"  ...{updated}/{len(chunk_ids)} chunks backfilled")
+                chunk = {
+                    "chunk_id": chunk_id,
+                    "document": doc,
+                    "messages": [],
+                    "metadata": meta,
+                }
 
-    logger.info(f"Backfill complete: {updated} chunks updated.")
+                new_metadata = run_analyzers(
+                    backfill_registry, chunk, twin_name=twin_name,
+                    llm_client=llm_client, llm_model=llm_model,
+                )
+
+                if new_metadata and new_metadata != {"_analyzers_applied": meta.get("_analyzers_applied", {})}:
+                    updated_meta = dict(meta)
+                    updated_meta.update(new_metadata)
+                    if "_analyzers_applied" in updated_meta and isinstance(updated_meta["_analyzers_applied"], dict):
+                        updated_meta["_analyzers_applied"] = json.dumps(updated_meta["_analyzers_applied"])
+                    update_ids.append(chunk_id)
+                    update_metas.append(updated_meta)
+            except Exception:
+                logger.warning(f"Failed to backfill chunk {chunk_id}", exc_info=True)
+                failed += 1
+
+        if update_ids:
+            collection.update(ids=update_ids, metadatas=update_metas)
+            updated += len(update_ids)
+
+        if updated > 0 and updated % 500 < batch_size:
+            logger.info(f"  ...{updated}/{total} chunks backfilled")
+
+    logger.info(f"Backfill complete: {updated} chunks updated, {failed} failed.")
     return updated
 
 
