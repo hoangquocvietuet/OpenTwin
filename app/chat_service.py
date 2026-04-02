@@ -19,7 +19,26 @@ MAX_MESSAGE_LENGTH = 10_000
 class ChatResult:
     content: str
     retrieval_metadata: dict | None = None
+    retrieved_chunks: list[dict] | None = None
     error: bool = False
+
+
+def _extract_utterances_by_speaker(document: str, speaker: str) -> list[str]:
+    """Extract utterances from a chunk document for a single speaker.
+
+    Our stored chunk document format is one line per turn: "Author: text".
+    We only keep lines attributed to `speaker` to avoid role-mixing in few-shot.
+    """
+    out: list[str] = []
+    prefix = f"{speaker}:"
+    for raw_line in (document or "").splitlines():
+        line = raw_line.strip()
+        if not line.startswith(prefix):
+            continue
+        text = line[len(prefix):].strip()
+        if text:
+            out.append(text)
+    return out
 
 
 def chat(
@@ -27,10 +46,13 @@ def chat(
     collection,
     session_factory,
     twin_slug: str,
+    twin_name: str,
     system_prompt: str,
+    rewrite_prompt: str,
     llm_base_url: str,
     llm_model: str,
     llm_api_key: str,
+    mode: str = "answer",
 ) -> ChatResult:
     """Process a chat message through the full RAG pipeline.
 
@@ -46,6 +68,20 @@ def chat(
     if not content:
         return ChatResult(content="Please enter a message.", error=True)
 
+    # Normalize mode (API / UI)
+    mode = (mode or "answer").strip().lower()
+    if mode in ("chat", "answer"):
+        mode = "answer"
+
+    # Lightweight UX: allow "rewrite:" prefix without changing UI.
+    lowered = content.lower()
+    if lowered.startswith("rewrite:"):
+        mode = "rewrite"
+        content = content[len("rewrite:"):].strip()
+    elif lowered.startswith("rewrite "):
+        mode = "rewrite"
+        content = content[len("rewrite"):].strip()
+
     # Truncate silently if too long
     if len(content) > MAX_MESSAGE_LENGTH:
         content = content[:MAX_MESSAGE_LENGTH]
@@ -53,47 +89,72 @@ def chat(
     # 2. Check if twin has data
     if collection.count() == 0:
         return ChatResult(
-            content="I don't have enough context to answer that authentically. Import data first.",
+            content="This twin doesn't have any imported data yet. Import chat data first, then ask again.",
             error=True,
         )
 
     # 3. Retrieve
     retrieved = retrieve_chunks(collection, content, n_results=5)
 
-    if not retrieved:
-        return ChatResult(
-            content="I don't have enough context to answer that authentically.",
-            retrieval_metadata={"chunks": 0, "avg_similarity": 0},
-            error=True,
-        )
-
     # 4. Build messages
     few_shot = format_few_shot_examples(retrieved, max_examples=3)
-    avg_distance = sum(r["distance"] for r in retrieved) / len(retrieved)
+    avg_distance = (
+        (sum(r["distance"] for r in retrieved) / len(retrieved)) if retrieved else 1.0
+    )
 
-    # Get recent chat history
-    with session_factory() as session:
-        recent_msgs = (
-            session.query(ChatMessage)
-            .filter_by(twin_slug=twin_slug)
-            .order_by(ChatMessage.id.desc())
-            .limit(10)
-            .all()
-        )
-        recent_msgs.reverse()
+    if mode == "rewrite":
+        # Copy / rewrite mode: rephrase user's text in the twin's voice.
+        # Extract twin's utterances from retrieved chunks as style examples.
+        style_lines: list[str] = []
+        for chunk in retrieved[:5]:
+            for u in _extract_utterances_by_speaker(chunk.get("document", ""), twin_name):
+                style_lines.append(u)
+        seen: set[str] = set()
+        style_lines = [s for s in style_lines if not (s in seen or seen.add(s))]
+        style_block = "\n- " + "\n- ".join(style_lines[:12]) if style_lines else ""
 
-    messages = [{"role": "system", "content": system_prompt}]
+        messages = [
+            {"role": "system", "content": rewrite_prompt},
+            {
+                "role": "system",
+                "content": f"Examples of how you type (use for style only, NOT for content):{style_block}".strip(),
+            },
+            {"role": "user", "content": content},
+        ]
+    else:
+        # Answer mode — normal chat
+        with session_factory() as session:
+            recent_msgs = (
+                session.query(ChatMessage)
+                .filter_by(twin_slug=twin_slug)
+                .order_by(ChatMessage.id.desc())
+                .limit(10)
+                .all()
+            )
+            recent_msgs.reverse()
 
-    if few_shot:
-        messages.append({
-            "role": "system",
-            "content": f"Here are examples of how you actually talk:\n\n{few_shot}",
-        })
+        messages = [{"role": "system", "content": system_prompt}]
 
-    for msg in recent_msgs:
-        messages.append({"role": msg.role, "content": msg.content})
+        if not retrieved:
+            messages.append({
+                "role": "system",
+                "content": (
+                    "No relevant retrieved context was found for the user's message. "
+                    "Do your best with general knowledge and the system prompt. "
+                    "If the question depends on personal history or tone, ask 1-2 specific follow-up questions."
+                ),
+            })
 
-    messages.append({"role": "user", "content": content})
+        if few_shot:
+            messages.append({
+                "role": "system",
+                "content": f"Here are examples of how you actually talk:\n\n{few_shot}",
+            })
+
+        for msg in recent_msgs:
+            messages.append({"role": msg.role, "content": msg.content})
+
+        messages.append({"role": "user", "content": content})
 
     # 5. LLM call
     try:
@@ -105,9 +166,14 @@ def chat(
             timeout=30,
         )
         assistant_content = response.choices[0].message.content or ""
+    except openai.NotFoundError:
+        return ChatResult(
+            content=f"Model '{llm_model}' not found. Check the model name in Settings.",
+            error=True,
+        )
     except openai.APIConnectionError:
         return ChatResult(
-            content="Could not reach the LLM. Check that Ollama is running.",
+            content="Could not reach the LLM. Check the base URL in Settings.",
             error=True,
         )
     except openai.APITimeoutError:
@@ -143,7 +209,7 @@ def chat(
             session.add(ChatMessage(
                 twin_slug=twin_slug,
                 role="user",
-                content=content,
+                content=content if mode != "rewrite" else f"[copy] {content}",
             ))
             session.add(ChatMessage(
                 twin_slug=twin_slug,
@@ -159,4 +225,5 @@ def chat(
     return ChatResult(
         content=assistant_content,
         retrieval_metadata=retrieval_meta,
+        retrieved_chunks=retrieved,
     )

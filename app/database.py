@@ -26,6 +26,13 @@ class ChatMessage(Base):
     created_at = Column(DateTime, default=lambda: datetime.now(timezone.utc))
 
 
+class AppSetting(Base):
+    __tablename__ = "app_settings"
+
+    key = Column(String, primary_key=True)
+    value = Column(Text, nullable=False)
+
+
 def create_engine_and_tables(db_path: str):
     """Create SQLite engine and ensure tables exist."""
     os.makedirs(os.path.dirname(db_path) or ".", exist_ok=True)
@@ -53,3 +60,22 @@ class SessionFactory:
             yield session
         finally:
             session.close()
+
+
+def load_settings(session_factory: "SessionFactory") -> dict[str, str]:
+    """Load all persisted settings from the database."""
+    with session_factory() as session:
+        rows = session.query(AppSetting).all()
+        return {row.key: row.value for row in rows}
+
+
+def save_settings(session_factory: "SessionFactory", settings: dict[str, str]):
+    """Persist settings to the database (upsert)."""
+    with session_factory() as session:
+        for key, value in settings.items():
+            existing = session.query(AppSetting).filter_by(key=key).first()
+            if existing:
+                existing.value = value
+            else:
+                session.add(AppSetting(key=key, value=value))
+        session.commit()

@@ -12,7 +12,7 @@ from fastapi.testclient import TestClient
 from app.chat import create_chat_router
 from app.database import create_engine_and_tables, SessionFactory, ChatMessage
 from app.embedder import ingest_chunks, load_chunks_from_jsonl, get_embedding_function
-from app.prompt import build_system_prompt, load_fingerprint
+from app.prompt import build_answer_prompt, build_rewrite_prompt, load_fingerprint
 from app.retrieval import retrieve_chunks
 
 
@@ -26,7 +26,8 @@ def test_full_chat_pipeline(tmp_data_dir, tmp_path):
     # 2. Load fingerprint and build system prompt
     fp_path = str(tmp_data_dir / "hoang_quoc_viet" / "style_fingerprint.json")
     fp = load_fingerprint(fp_path)
-    system_prompt = build_system_prompt("Hoàng Quốc Việt", fp)
+    system_prompt = build_answer_prompt("Hoàng Quốc Việt", fp)
+    rewrite_prompt = build_rewrite_prompt("Hoàng Quốc Việt", fp)
     assert "Hoàng Quốc Việt" in system_prompt
 
     # 3. Ingest chunks into ChromaDB with explicit embedding function
@@ -48,7 +49,9 @@ def test_full_chat_pipeline(tmp_data_dir, tmp_path):
         collection=collection,
         session_factory=session_factory,
         twin_slug="hoang_quoc_viet",
+        twin_name="Hoàng Quốc Việt",
         system_prompt=system_prompt,
+        rewrite_prompt=rewrite_prompt,
         llm_base_url="http://localhost:11434/v1",
         llm_model="llama3.1:8b",
         llm_api_key="ollama",

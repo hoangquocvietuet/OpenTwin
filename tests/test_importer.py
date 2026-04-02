@@ -82,7 +82,26 @@ def test_find_inbox_folder_nested(tmp_path):
     (inbox_dir / "message_1.json").write_text("{}")
 
     result = find_inbox_folder(str(tmp_path))
-    assert result.endswith("inbox")
+    assert "inbox" in result
+
+
+def test_find_inbox_folder_merges_e2ee(tmp_path):
+    """Merges inbox/ and e2ee_cutover/ into one folder."""
+    messages = tmp_path / "your_facebook_activity" / "messages"
+    inbox_dir = messages / "inbox" / "friend_123"
+    inbox_dir.mkdir(parents=True)
+    (inbox_dir / "message_1.json").write_text("{}")
+
+    e2ee_dir = messages / "e2ee_cutover" / "dm_456"
+    e2ee_dir.mkdir(parents=True)
+    (e2ee_dir / "message_1.json").write_text("{}")
+
+    result = find_inbox_folder(str(tmp_path))
+    # Should be a merged temp directory containing both
+    assert os.path.isdir(result)
+    contents = os.listdir(result)
+    assert "friend_123" in contents
+    assert "e2ee_cutover__dm_456" in contents
 
 
 def test_find_inbox_folder_missing(tmp_path):

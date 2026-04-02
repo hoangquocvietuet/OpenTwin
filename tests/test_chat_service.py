@@ -39,7 +39,9 @@ def test_chat_rejects_empty_message(mock_collection, mock_session_factory):
         collection=mock_collection,
         session_factory=mock_session_factory,
         twin_slug="test",
+        twin_name="Việt",
         system_prompt="You are Việt.",
+        rewrite_prompt="Rephrase in your style.",
         llm_base_url="http://localhost:11434/v1",
         llm_model="llama3.1:8b",
         llm_api_key="ollama",
@@ -58,12 +60,14 @@ def test_chat_returns_no_data_when_empty_collection(mock_session_factory):
         collection=empty_collection,
         session_factory=mock_session_factory,
         twin_slug="test",
+        twin_name="Việt",
         system_prompt="You are Việt.",
+        rewrite_prompt="Rephrase in your style.",
         llm_base_url="http://localhost:11434/v1",
         llm_model="llama3.1:8b",
         llm_api_key="ollama",
     )
-    assert "import data" in result.content.lower() or "not enough context" in result.content.lower()
+    assert "import" in result.content.lower() or "data" in result.content.lower()
 
 
 def test_chat_truncates_and_calls_llm(mock_collection, mock_session_factory):
@@ -85,7 +89,9 @@ def test_chat_truncates_and_calls_llm(mock_collection, mock_session_factory):
             collection=mock_collection,
             session_factory=mock_session_factory,
             twin_slug="test",
+            twin_name="Việt",
             system_prompt="You are Việt.",
+            rewrite_prompt="Rephrase in your style.",
             llm_base_url="http://localhost:11434/v1",
             llm_model="llama3.1:8b",
             llm_api_key="ollama",
@@ -116,7 +122,9 @@ def test_chat_handles_connection_error(mock_collection, mock_session_factory):
             collection=mock_collection,
             session_factory=mock_session_factory,
             twin_slug="test",
+            twin_name="Việt",
             system_prompt="You are Việt.",
+            rewrite_prompt="Rephrase in your style.",
             llm_base_url="http://localhost:11434/v1",
             llm_model="llama3.1:8b",
             llm_api_key="ollama",
@@ -139,7 +147,9 @@ def test_chat_handles_json_decode_error(mock_collection, mock_session_factory):
             collection=mock_collection,
             session_factory=mock_session_factory,
             twin_slug="test",
+            twin_name="Việt",
             system_prompt="You are Việt.",
+            rewrite_prompt="Rephrase in your style.",
             llm_base_url="http://localhost:11434/v1",
             llm_model="llama3.1:8b",
             llm_api_key="ollama",

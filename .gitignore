@@ -10,3 +10,5 @@ build/
 venv/
 *.zip
 inbox/
+.DS_Store
+.gstack/

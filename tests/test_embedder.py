@@ -1,12 +1,11 @@
 import chromadb
-from chromadb.utils.embedding_functions import SentenceTransformerEmbeddingFunction
-from app.embedder import ingest_chunks, load_chunks_from_jsonl, get_embedding_function
+from app.embedder import ingest_chunks, load_chunks_from_jsonl, get_embedding_function, OpenAICompatibleEmbeddingFunction
 
 
 def test_get_embedding_function():
-    """Returns a SentenceTransformerEmbeddingFunction."""
-    ef = get_embedding_function("all-MiniLM-L6-v2")
-    assert isinstance(ef, SentenceTransformerEmbeddingFunction)
+    """Returns an OpenAICompatibleEmbeddingFunction."""
+    ef = get_embedding_function("text-embedding-3-small")
+    assert isinstance(ef, OpenAICompatibleEmbeddingFunction)
 
 
 def test_load_chunks_from_jsonl(sample_chunks_path):

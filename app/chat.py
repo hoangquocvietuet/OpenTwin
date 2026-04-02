@@ -9,6 +9,7 @@ from app.database import ChatMessage
 
 class ChatRequest(BaseModel):
     content: str
+    mode: str | None = "answer"  # "answer" | "rewrite" (copy); "chat" accepted as alias for answer
 
 
 class ChatResponse(BaseModel):
@@ -20,7 +21,9 @@ def create_chat_router(
     collection,
     session_factory,
     twin_slug: str,
+    twin_name: str,
     system_prompt: str,
+    rewrite_prompt: str,
     llm_base_url: str,
     llm_model: str,
     llm_api_key: str,
@@ -38,10 +41,13 @@ def create_chat_router(
             collection=collection,
             session_factory=session_factory,
             twin_slug=twin_slug,
+            twin_name=twin_name,
             system_prompt=system_prompt,
+            rewrite_prompt=rewrite_prompt,
             llm_base_url=llm_base_url,
             llm_model=llm_model,
             llm_api_key=llm_api_key,
+            mode=req.mode or "answer",
         )
         return ChatResponse(
             content=result.content,
