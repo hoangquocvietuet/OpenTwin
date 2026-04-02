@@ -82,7 +82,7 @@ def critic_agent(
             state.approved = False
             state.critic_feedback = feedback
             state.retry_count += 1
-    except (json.JSONDecodeError, Exception):
+    except Exception:
         # On parse failure, default to approved to avoid blocking
         state.approved = True
 

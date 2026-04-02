@@ -66,3 +66,24 @@ def test_context_agent_handles_fetch_failure():
 
     # Falls back to raw_input minus the URL
     assert result.resolved_content is not None
+
+
+def test_context_agent_handles_non_200_status():
+    """Context agent falls back to raw_input on non-200 HTTP status."""
+    state = PipelineState(
+        raw_input="rewrite this https://example.com/gone",
+        mode="rewrite",
+        needs_context=True,
+        context_source="url",
+        context_url="https://example.com/gone",
+    )
+
+    with patch("app.pipeline.agents.context.httpx") as mock_httpx:
+        mock_response = MagicMock()
+        mock_response.status_code = 404
+        mock_response.text = "Not Found"
+        mock_httpx.get.return_value = mock_response
+
+        result = context_agent(state)
+
+    assert result.resolved_content == state.raw_input

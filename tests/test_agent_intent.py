@@ -65,3 +65,14 @@ def test_intent_agent_handles_malformed_json():
     assert result.intent == "general"
     assert result.tone == "neutral"
     assert result.resolved_content == "hello"
+
+
+def test_intent_agent_no_llm_client():
+    """Falls back to defaults when no LLM client is provided."""
+    state = PipelineState(raw_input="hello", mode="answer")
+
+    result = intent_agent(state)
+
+    assert result.intent == "general"
+    assert result.tone == "neutral"
+    assert result.resolved_content == "hello"

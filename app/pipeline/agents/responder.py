@@ -69,11 +69,12 @@ def responder_agent(
         except Exception:
             pass
 
-    # Critic feedback on retry
+    # Critic feedback on retry (user role to limit prompt injection authority)
     if state.critic_feedback and state.retry_count > 0:
+        feedback = state.critic_feedback[:500]  # cap length
         messages.append({
-            "role": "system",
-            "content": f"Your previous attempt was rejected. Feedback: {state.critic_feedback}\nPlease try again following the feedback.",
+            "role": "user",
+            "content": f"[Feedback on your previous attempt: {feedback}. Please try again following the feedback.]",
         })
 
     # User message
@@ -88,6 +89,6 @@ def responder_agent(
         )
         state.draft_response = response.choices[0].message.content or ""
     except Exception as e:
-        state.draft_response = f"LLM error: {e}"
+        state.draft_response = "An error occurred generating a response. Please try again."
 
     return state

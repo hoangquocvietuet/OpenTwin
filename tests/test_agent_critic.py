@@ -91,3 +91,20 @@ def test_critic_handles_malformed_json():
 
     # Default to approved to avoid blocking the user
     assert result.approved is True
+
+
+def test_critic_no_llm_client():
+    """Critic auto-approves when no LLM client is provided."""
+    state = PipelineState(
+        raw_input="test",
+        mode="answer",
+        intent="casual_chat",
+        tone="casual",
+        resolved_content="test",
+        draft_response="ok",
+    )
+
+    result = critic_agent(state)
+
+    assert result.approved is True
+    assert result.retry_count == 0

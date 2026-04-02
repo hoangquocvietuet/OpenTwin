@@ -1,4 +1,9 @@
-"""Pipeline state shared across all agents."""
+"""Pipeline state shared across all agents.
+
+NOTE: This uses a mutable dataclass for simplicity with sequential execution.
+If migrating to LangGraph's StateGraph.invoke(), convert to TypedDict with
+reducer annotations — mutable dataclass mutations aren't tracked by LangGraph.
+"""
 
 from dataclasses import dataclass, field
 
