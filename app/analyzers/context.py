@@ -73,7 +73,5 @@ def analyze_context(
             "interaction_type": parsed.get("interaction_type", defaults["interaction_type"]),
             "relationship": parsed.get("relationship", defaults["relationship"]),
         }
-    except (json.JSONDecodeError, Exception):
-        if raw and len(raw) < 200:
-            return {**defaults, "context_summary": raw.strip()}
+    except Exception:
         return defaults

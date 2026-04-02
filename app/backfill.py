@@ -79,7 +79,19 @@ def backfill_collection(
     Returns:
         Number of chunks updated.
     """
-    chunk_ids = find_chunks_needing_backfill(collection, registry, analyzer_name)
+    # Only run non-LLM analyzers during backfill (messages aren't stored in ChromaDB,
+    # so LLM analyzers would just produce defaults and permanently mark as "applied")
+    from app.analyzers.registry import AnalyzerRegistry as _AR
+    backfill_registry = _AR()
+    for analyzer in registry.get_all():
+        if not analyzer.requires_llm:
+            backfill_registry.register(
+                analyzer.name, fn=analyzer.fn, version=analyzer.version,
+                requires_llm=analyzer.requires_llm, run_order=analyzer.run_order,
+            )
+
+    # Use the filtered registry for both detection and execution
+    chunk_ids = find_chunks_needing_backfill(collection, backfill_registry, analyzer_name)
     if not chunk_ids:
         logger.info("No chunks need backfill.")
         return 0
@@ -91,17 +103,6 @@ def backfill_collection(
     failed = 0
     batch_size = 100
     chunk_id_list = list(chunk_ids)
-
-    # Only run non-LLM analyzers during backfill (messages aren't stored in ChromaDB,
-    # so LLM analyzers would just produce defaults and permanently mark as "applied")
-    from app.analyzers.registry import AnalyzerRegistry as _AR
-    backfill_registry = _AR()
-    for analyzer in registry.get_all():
-        if not analyzer.requires_llm:
-            backfill_registry.register(
-                analyzer.name, fn=analyzer.fn, version=analyzer.version,
-                requires_llm=analyzer.requires_llm, run_order=analyzer.run_order,
-            )
 
     for batch_start in range(0, total, batch_size):
         batch_ids = chunk_id_list[batch_start:batch_start + batch_size]

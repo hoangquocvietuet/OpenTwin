@@ -38,7 +38,7 @@ def analyze_persona(
     context_summary = input.chunk.get("metadata", {}).get("context_summary", "")
     context_line = f"\n\nContext: {context_summary}" if context_summary else ""
 
-    system_prompt = _SYSTEM_PROMPT.format(twin_name=twin_name)
+    system_prompt = _SYSTEM_PROMPT.replace("{twin_name}", twin_name)
 
     try:
         response = llm_client.chat.completions.create(
