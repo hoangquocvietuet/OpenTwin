@@ -61,7 +61,7 @@ def intent_agent(
             parsed = json.loads(content)
             state.intent = parsed.get("intent", "general")
             state.tone = parsed.get("tone", "neutral")
-        except Exception:
+        except (json.JSONDecodeError, Exception):
             state.intent = "general"
             state.tone = "neutral"
     else:

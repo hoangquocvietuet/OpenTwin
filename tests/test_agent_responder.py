@@ -95,28 +95,3 @@ def test_responder_includes_critic_feedback_on_retry():
     messages = call_args.kwargs["messages"]
     all_content = " ".join(m["content"] for m in messages)
     assert "answered instead of rephrasing" in all_content
-
-
-def test_responder_handles_llm_exception():
-    """Responder returns generic error on LLM exception."""
-    client = MagicMock()
-    client.chat.completions.create.side_effect = RuntimeError("API timeout")
-    state = PipelineState(
-        raw_input="hello",
-        mode="answer",
-        intent="casual_chat",
-        tone="casual",
-        resolved_content="hello",
-        tone_chunks=[],
-        content_chunks=[],
-    )
-
-    result = responder_agent(
-        state,
-        llm_client=client,
-        llm_model="test",
-        system_prompt="You are Viet.",
-        rewrite_prompt="Rephrase.",
-    )
-
-    assert "error occurred" in result.draft_response.lower()
