@@ -76,7 +76,7 @@ def test_critic_increments_retry_count():
 
 
 def test_critic_handles_malformed_json():
-    """Critic defaults to approved on malformed LLM response."""
+    """Critic rejects on malformed LLM response (fail-safe)."""
     client = _make_mock_llm_client("not json")
     state = PipelineState(
         raw_input="test",
@@ -89,5 +89,7 @@ def test_critic_handles_malformed_json():
 
     result = critic_agent(state, llm_client=client, llm_model="test")
 
-    # Default to approved to avoid blocking the user
-    assert result.approved is True
+    # Fail-safe: reject so bad output doesn't slip through
+    assert result.approved is False
+    assert result.retry_count == 1
+    assert "unparseable" in result.critic_feedback.lower()

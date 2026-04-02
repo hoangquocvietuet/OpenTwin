@@ -87,7 +87,7 @@ def responder_agent(
             timeout=30,
         )
         state.draft_response = response.choices[0].message.content or ""
-    except Exception as e:
-        state.draft_response = f"LLM error: {e}"
+    except Exception:
+        state.draft_response = "Sorry, I couldn't generate a response right now. Please try again."
 
     return state
