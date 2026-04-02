@@ -2,6 +2,18 @@
 
 All notable changes to this project will be documented in this file.
 
+## [0.0.2.0] - 2026-04-03
+
+### Fixed
+- SSRF vulnerability in context agent: URL validation now blocks private/loopback/link-local IPs, non-http schemes, and DNS rebinding attacks (domain resolving to internal IPs)
+- Context agent re-enables redirect following for legitimate URLs while validating the final destination
+- Error leakage in responder agent: LLM exceptions no longer expose raw error details to users
+- Critic agent now rejects on JSON parse failure (fail-safe) instead of silently approving bad output
+
+### Changed
+- `build_pipeline()` is now wired up with real agent functions via `functools.partial` instead of placeholder lambdas
+- `run_pipeline()` uses the compiled LangGraph pipeline instead of manual sequential execution
+
 ## [0.0.1.0] - 2026-04-03
 
 ### Added
