@@ -1,0 +1,9 @@
+services:
+  digital-twins:
+    build: .
+    ports:
+      - "7860:7860"
+    volumes:
+      - ./data:/app/data
+      - ./db:/app/db
+    env_file: .env
