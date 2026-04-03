@@ -291,6 +291,112 @@ def _pipeline_chat(
     )
 
 
+def chat_stream(
+    content: str,
+    collection,
+    session_factory,
+    twin_slug: str,
+    twin_name: str,
+    system_prompt: str,
+    rewrite_prompt: str,
+    llm_base_url: str,
+    llm_model: str,
+    llm_api_key: str,
+    mode: str = "answer",
+    conversation_id: str | None = None,
+):
+    """Streaming version of chat(). Yields text chunks (str), then metadata (dict).
+
+    For the pipeline path: runs the full pipeline, then yields the approved
+    text character-by-character (replay streaming).
+    For the legacy path: yields the full response, then metadata.
+    Final yield is always a dict with retrieval metadata.
+    On error, yields a single dict with error=True.
+    """
+    # Reuse all validation from chat()
+    content = content.strip()
+    if not content:
+        yield {"content": "Please enter a message.", "error": True}
+        return
+
+    mode = (mode or "answer").strip().lower()
+    if mode in ("chat", "answer"):
+        mode = "answer"
+
+    lowered = content.lower()
+    if lowered.startswith("rewrite:"):
+        mode = "rewrite"
+        content = content[len("rewrite:"):].strip()
+    elif lowered.startswith("rewrite "):
+        mode = "rewrite"
+        content = content[len("rewrite"):].strip()
+
+    if len(content) > MAX_MESSAGE_LENGTH:
+        content = content[:MAX_MESSAGE_LENGTH]
+
+    if collection.count() == 0:
+        yield {"content": "This twin doesn't have any imported data yet.", "error": True}
+        return
+
+    # Run the sync chat to get the full response
+    result = chat(
+        content=content,
+        collection=collection,
+        session_factory=session_factory,
+        twin_slug=twin_slug,
+        twin_name=twin_name,
+        system_prompt=system_prompt,
+        rewrite_prompt=rewrite_prompt,
+        llm_base_url=llm_base_url,
+        llm_model=llm_model,
+        llm_api_key=llm_api_key,
+        mode=mode,
+    )
+
+    if result.error:
+        yield {"content": result.content, "error": True}
+        return
+
+    # Replay streaming: yield the text in word-sized chunks
+    words = result.content.split(" ")
+    for i, word in enumerate(words):
+        if i > 0:
+            yield " "
+        yield word
+
+    # Update conversation_id on saved messages if provided
+    if conversation_id:
+        try:
+            with session_factory() as session:
+                recent = (
+                    session.query(ChatMessage)
+                    .filter_by(twin_slug=twin_slug, conversation_id=None)
+                    .order_by(ChatMessage.id.desc())
+                    .limit(2)
+                    .all()
+                )
+                for msg in recent:
+                    msg.conversation_id = conversation_id
+                session.commit()
+        except Exception:
+            logger.warning("Failed to update conversation_id", exc_info=True)
+
+    # Final yield: metadata with retrieved chunks
+    retrieved = []
+    for c in (result.retrieved_chunks or []):
+        retrieved.append({
+            "document": c.get("document", "")[:300],
+            "distance": round(c.get("distance", 0), 3),
+        })
+
+    yield {
+        "chunks": result.retrieval_metadata.get("chunks", 0) if result.retrieval_metadata else 0,
+        "avg_similarity": result.retrieval_metadata.get("avg_similarity", 0) if result.retrieval_metadata else 0,
+        "retrieved": retrieved,
+        **({"pipeline": True, "intent": result.retrieval_metadata.get("intent"), "tone": result.retrieval_metadata.get("tone"), "retries": result.retrieval_metadata.get("retries", 0)} if result.retrieval_metadata and result.retrieval_metadata.get("pipeline") else {}),
+    }
+
+
 def chat(
     content: str,
     collection,
