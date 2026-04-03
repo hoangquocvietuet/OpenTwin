@@ -61,7 +61,7 @@ def _legacy_chat(
 ) -> ChatResult:
     """Legacy chat path using direct retrieval and LLM call."""
     # Retrieve
-    retrieved = retrieve_chunks(collection, content, n_results=5)
+    retrieved = retrieve_chunks(collection, content, n_results=20)
 
     # Build messages
     few_shot = format_few_shot_examples(retrieved, max_examples=3)
@@ -109,6 +109,17 @@ def _legacy_chat(
                     "No relevant retrieved context was found for the user's message. "
                     "Do your best with general knowledge and the system prompt. "
                     "If the question depends on personal history or tone, ask 1-2 specific follow-up questions."
+                ),
+            })
+        elif avg_distance > 1.0:
+            # Retrieved chunks exist but are very low quality (negative similarity).
+            # Tell the LLM to rely on system prompt, not the noisy context.
+            messages.append({
+                "role": "system",
+                "content": (
+                    "The retrieved context below has very low relevance to the user's message. "
+                    "Rely on your identity and the system prompt to answer. "
+                    "Only use retrieved context if it is clearly relevant."
                 ),
             })
 

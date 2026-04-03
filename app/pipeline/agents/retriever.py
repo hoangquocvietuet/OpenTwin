@@ -12,8 +12,8 @@ from app.pipeline.tone_map import get_similar_tones
 # Only keep content chunks with distance below this.
 CONTENT_MAX_DISTANCE = 0.6
 
-TONE_RESULTS_COUNT = 3
-CONTENT_RESULTS_COUNT = 2
+TONE_RESULTS_COUNT = 10
+CONTENT_RESULTS_COUNT = 10
 
 
 def retriever_agent(
@@ -39,7 +39,7 @@ def retriever_agent(
         try:
             tone_results = collection.query(
                 query_texts=[query_text],
-                n_results=10,
+                n_results=20,
                 where={
                     "$and": [
                         {"tone": {"$in": similar_tones}},
@@ -84,7 +84,7 @@ def retriever_agent(
     try:
         content_results = collection.query(
             query_texts=[query_text],
-            n_results=5,
+            n_results=20,
             where={"twin_msg_ratio": {"$gte": 0.2}},
             include=["documents", "distances", "metadatas"],
         )

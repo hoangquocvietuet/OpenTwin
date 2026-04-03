@@ -33,6 +33,20 @@ def responder_agent(
     else:
         messages.append({"role": "system", "content": system_prompt})
 
+    # Check retrieval quality — warn LLM if chunks are low relevance
+    all_chunks = (state.tone_chunks or []) + (state.content_chunks or [])
+    if all_chunks:
+        avg_distance = sum(c.get("distance", 1.0) for c in all_chunks) / len(all_chunks)
+        if avg_distance > 1.0:
+            messages.append({
+                "role": "system",
+                "content": (
+                    "The retrieved context below has very low relevance to the user's message. "
+                    "Rely on your identity and the system prompt to answer. "
+                    "Only use retrieved context if it is clearly relevant."
+                ),
+            })
+
     # Tone chunks — style reference
     if state.tone_chunks:
         tone_docs = "\n\n---\n\n".join(c.get("document", "") for c in state.tone_chunks if c.get("document"))
