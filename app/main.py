@@ -10,10 +10,12 @@ logging.basicConfig(level=logging.INFO, format="%(levelname)s:%(name)s:%(message
 import chromadb
 import gradio as gr
 from fastapi import FastAPI
+from fastapi.middleware.cors import CORSMiddleware
 
 from app.config import settings
 from app.database import create_engine_and_tables, SessionFactory, load_settings as load_db_settings
 from app.chat import create_chat_router
+from app.api_v2 import create_api_v2_router
 from app.embedder import get_embedding_function
 from app.importer import _safe_collection_name, rebuild_embeddings
 from app.prompt import build_answer_prompt, build_rewrite_prompt, load_fingerprint
@@ -27,6 +29,14 @@ from app.ui import create_ui
 def create_app() -> FastAPI:
     """Create and configure the FastAPI application."""
     app = FastAPI(title="Digital Twins")
+
+    app.add_middleware(
+        CORSMiddleware,
+        allow_origins=["http://localhost:3000", "http://localhost:3001"],
+        allow_credentials=True,
+        allow_methods=["*"],
+        allow_headers=["*"],
+    )
 
     # Database
     engine = create_engine_and_tables(settings.sqlite_path)
@@ -120,6 +130,18 @@ def create_app() -> FastAPI:
         llm_api_key=llm_api_key,
     )
     app.include_router(chat_router)
+
+    api_v2_router = create_api_v2_router(
+        session_factory=session_factory,
+        twin_slug=twin_slug,
+        twin_name=twin_name,
+        system_prompt=system_prompt,
+        rewrite_prompt=rewrite_prompt,
+        chromadb_client=chromadb_client,
+        data_dir=settings.data_dir,
+        collection=collection,
+    )
+    app.include_router(api_v2_router)
 
     # Gradio UI
     ui = create_ui(
